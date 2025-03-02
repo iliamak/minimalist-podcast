@@ -1,0 +1,25 @@
+{
+  "version": 2,
+  "routes": [
+    {
+      "src": "/api/proxy",
+      "dest": "/api/proxy.js",
+      "methods": ["GET"]
+    }
+  ],
+  "headers": [
+    {
+      "source": "/api/proxy",
+      "headers": [
+        {
+          "key": "Access-Control-Allow-Origin",
+          "value": "*"
+        },
+        {
+          "key": "Access-Control-Allow-Methods",
+          "value": "GET"
+        }
+      ]
+    }
+  ]
+}
