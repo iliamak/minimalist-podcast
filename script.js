@@ -18,6 +18,9 @@ const donateBtn = document.getElementById('donate-btn');
 const waveContainer = document.getElementById('wave-container');
 const waveElement = document.getElementById('wave');
 
+// Константы для работы с прокси
+const CORS_PROXY_URL = 'https://api.allorigins.win/raw?url=';
+
 // Переменные для хранения данных
 let podcasts = JSON.parse(localStorage.getItem('podcasts')) || [];
 let currentPodcast = null;
@@ -98,24 +101,84 @@ function resetWaveVisualizer() {
 function initAudioContext() {
     if (!audioContext) {
         try {
+            // Создаем новый аудиоконтекст
             audioContext = new (window.AudioContext || window.webkitAudioContext)();
             analyser = audioContext.createAnalyser();
             analyser.fftSize = 64;
             
-            if (!audioSource) {
-                audioSource = audioContext.createMediaElementSource(audioPlayer);
-                audioSource.connect(analyser);
-                analyser.connect(audioContext.destination);
+            // Создаем временный аудиоэлемент для обхода CORS
+            const tempAudio = new Audio();
+            tempAudio.crossOrigin = 'anonymous';
+            
+            // Используем текущий src аудиоплеера, но через прокси
+            let audioUrl = audioPlayer.src;
+            
+            // Проверяем, не проксирован ли URL уже
+            if (!audioUrl.includes('allorigins.win') && !audioUrl.includes('cors-anywhere')) {
+                // Проксируем URL через CORS прокси
+                audioUrl = CORS_PROXY_URL + encodeURIComponent(audioUrl);
             }
+            
+            tempAudio.src = audioUrl;
+            
+            // Подключаем временный аудиоэлемент к аудиоконтексту
+            audioSource = audioContext.createMediaElementSource(tempAudio);
+            audioSource.connect(analyser);
+            analyser.connect(audioContext.destination);
+            
+            // Синхронизируем воспроизведение с основным плеером
+            tempAudio.currentTime = audioPlayer.currentTime;
+            if (!audioPlayer.paused) {
+                tempAudio.play().catch(error => {
+                    console.error('Ошибка при воспроизведении аудио через прокси:', error);
+                    // Если не удалось воспроизвести с прокси, используем имитацию визуализации
+                    startFakeVisualization();
+                });
+            }
+            
+            // Обновляем обработчики событий для синхронизации временного аудио с основным
+            audioPlayer.addEventListener('play', () => {
+                if (tempAudio.paused) {
+                    tempAudio.play().catch(error => {
+                        console.error('Ошибка при воспроизведении:', error);
+                    });
+                }
+            });
+            
+            audioPlayer.addEventListener('pause', () => {
+                tempAudio.pause();
+            });
+            
+            audioPlayer.addEventListener('timeupdate', () => {
+                // Только если разница больше 0.5 секунды
+                if (Math.abs(tempAudio.currentTime - audioPlayer.currentTime) > 0.5) {
+                    tempAudio.currentTime = audioPlayer.currentTime;
+                }
+            });
+            
+            audioPlayer.addEventListener('seeking', () => {
+                tempAudio.currentTime = audioPlayer.currentTime;
+            });
+            
+            audioPlayer.addEventListener('ended', () => {
+                tempAudio.pause();
+                tempAudio.currentTime = 0;
+            });
         } catch (error) {
             console.error('Ошибка при создании аудио контекста:', error);
+            // Если не удалось создать аудиоконтекст, используем имитацию визуализации
+            startFakeVisualization();
         }
     }
 }
 
 // Запуск визуализации
 function startVisualization() {
-    if (!analyser) return;
+    if (!analyser) {
+        // Если аналайзер не создан, используем имитацию визуализации
+        startFakeVisualization();
+        return;
+    }
     
     const bufferLength = analyser.frequencyBinCount;
     const dataArray = new Uint8Array(bufferLength);
@@ -137,6 +200,32 @@ function startVisualization() {
     };
     
     updateWaveform();
+}
+
+// Имитация визуализации звуковых волн (без доступа к реальным аудиоданным)
+function startFakeVisualization() {
+    console.log('Используем имитацию визуализации звука');
+    
+    const updateFakeWaveform = () => {
+        // Только если аудио воспроизводится
+        if (!audioPlayer.paused) {
+            for (let i = 0; i < waveBars.length; i++) {
+                // Генерируем случайные значения, имитирующие активность звука
+                const randomHeight = 5 + Math.random() * 50;
+                waveBars[i].style.height = `${randomHeight}px`;
+            }
+        } else {
+            // В режиме паузы - минимальная активность
+            for (let i = 0; i < waveBars.length; i++) {
+                const baseHeight = 5 + Math.random() * 10;
+                waveBars[i].style.height = `${baseHeight}px`;
+            }
+        }
+        
+        animationFrameId = requestAnimationFrame(updateFakeWaveform);
+    };
+    
+    updateFakeWaveform();
 }
 
 // Остановка визуализации
@@ -355,7 +444,22 @@ function playEpisode(episode) {
     }
     
     currentEpisode = episode;
+    
+    // Сбрасываем аудиоконтекст при смене эпизода
+    if (audioContext) {
+        audioContext.close().then(() => {
+            audioContext = null;
+            audioSource = null;
+            analyser = null;
+        }).catch(error => {
+            console.error('Ошибка при закрытии аудиоконтекста:', error);
+        });
+    }
+    
+    // Устанавливаем аудио источник напрямую (без прокси для основного воспроизведения)
     audioPlayer.src = episode.audioUrl;
+    
+    // Начинаем воспроизведение
     audioPlayer.play().catch(error => {
         console.error('Ошибка воспроизведения:', error);
         alert('Не удалось воспроизвести аудио. Проверьте соединение или URL эпизода.');
@@ -442,14 +546,6 @@ function openDonateLink() {
     // Здесь можно настроить ссылку на страницу с донатами
     alert('Спасибо, что хотите поддержать проект! Функция донатов будет доступна в ближайшее время.');
 }
-
-// Пример подкаста для тестирования (можно раскомментировать, чтобы добавить его автоматически)
-/*
-setTimeout(() => {
-    rssInput.value = 'https://feeds.simplecast.com/54nAGcIl'; // Пример: подкаст "The Daily" от The New York Times
-    addPodcastBtn.click();
-}, 1000);
-*/
 
 // Добавляем стили для миниатюр подкастов (дополняем CSS динамически)
 const style = document.createElement('style');
