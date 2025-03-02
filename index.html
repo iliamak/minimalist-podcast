@@ -11,6 +11,7 @@
     <div class="container">
         <header>
             <h1>Минималистичный Подкаст</h1>
+            <h2>Слушайте подкасты без лишнего</h2>
         </header>
         
         <div class="add-podcast">
@@ -18,16 +19,9 @@
             <button id="add-podcast-btn">Добавить</button>
         </div>
         
-        <div class="content">
-            <div class="podcasts-list">
-                <h2>Мои подкасты</h2>
-                <ul id="podcasts-container"></ul>
-            </div>
-            
-            <div class="episodes-list">
-                <h2>Эпизоды</h2>
-                <div id="episodes-container"></div>
-            </div>
+        <div class="podcasts-list">
+            <h2>Мои подкасты</h2>
+            <div id="podcasts-container" class="podcasts-container"></div>
         </div>
         
         <div class="player" id="player">
@@ -41,10 +35,17 @@
                 </div>
             </div>
             
+            <!-- Добавлена визуализация звуковых волн -->
+            <div class="wave-container" id="wave-container">
+                <div class="wave" id="wave">
+                    <!-- Генерируется динамически в JavaScript -->
+                </div>
+            </div>
+            
             <div class="player-controls">
-                <button id="back-15-btn"><i class="fas fa-undo"></i> 15с</button>
+                <button id="back-15-btn"><i class="fas fa-undo"></i></button>
                 <button id="play-btn"><i class="fas fa-play"></i></button>
-                <button id="forward-15-btn">15с <i class="fas fa-redo"></i></button>
+                <button id="forward-15-btn"><i class="fas fa-redo"></i></button>
             </div>
             
             <div class="progress-container">
@@ -56,6 +57,13 @@
             </div>
             
             <audio id="audio-player"></audio>
+        </div>
+        
+        <div class="content">
+            <div class="episodes-list">
+                <h2>Эпизоды</h2>
+                <div id="episodes-container"></div>
+            </div>
         </div>
         
         <footer>
