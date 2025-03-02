@@ -15,17 +15,27 @@ const currentPodcastImg = document.getElementById('current-podcast-img');
 const currentPodcastTitle = document.getElementById('current-podcast-title');
 const currentEpisodeTitle = document.getElementById('current-episode-title');
 const donateBtn = document.getElementById('donate-btn');
+const waveContainer = document.getElementById('wave-container');
+const waveElement = document.getElementById('wave');
 
 // Переменные для хранения данных
 let podcasts = JSON.parse(localStorage.getItem('podcasts')) || [];
 let currentPodcast = null;
 let currentEpisode = null;
+let audioContext = null;
+let audioSource = null;
+let analyser = null;
+let waveBars = [];
+let animationFrameId = null;
 
 // Инициализация страницы
 init();
 
 // Функция инициализации
 function init() {
+    // Создание волновых элементов для визуализации
+    createWaveElements();
+    
     // Отображение сохраненных подкастов
     renderPodcasts();
     
@@ -42,17 +52,99 @@ function init() {
     // Настройка событий аудиоплеера
     audioPlayer.addEventListener('play', () => {
         playBtn.innerHTML = '<i class="fas fa-pause"></i>';
+        initAudioContext();
+        startVisualization();
     });
     
     audioPlayer.addEventListener('pause', () => {
         playBtn.innerHTML = '<i class="fas fa-play"></i>';
+        stopVisualization();
     });
     
     audioPlayer.addEventListener('ended', () => {
         playBtn.innerHTML = '<i class="fas fa-play"></i>';
         progress.style.width = '0%';
         currentTimeEl.textContent = '0:00';
+        stopVisualization();
+        resetWaveVisualizer();
     });
+}
+
+// Создание элементов для визуализации волн
+function createWaveElements() {
+    waveElement.innerHTML = '';
+    const barsCount = 32; // Количество полосок
+    
+    for (let i = 0; i < barsCount; i++) {
+        const bar = document.createElement('div');
+        bar.className = 'wave-bar';
+        waveElement.appendChild(bar);
+        waveBars.push(bar);
+    }
+    
+    // Инициализация с случайными начальными значениями для пустой визуализации
+    resetWaveVisualizer();
+}
+
+// Сброс визуализатора волн до состояния покоя
+function resetWaveVisualizer() {
+    waveBars.forEach(bar => {
+        const randomHeight = 5 + Math.random() * 15;
+        bar.style.height = `${randomHeight}px`;
+    });
+}
+
+// Инициализация аудио контекста для визуализации
+function initAudioContext() {
+    if (!audioContext) {
+        try {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            analyser = audioContext.createAnalyser();
+            analyser.fftSize = 64;
+            
+            if (!audioSource) {
+                audioSource = audioContext.createMediaElementSource(audioPlayer);
+                audioSource.connect(analyser);
+                analyser.connect(audioContext.destination);
+            }
+        } catch (error) {
+            console.error('Ошибка при создании аудио контекста:', error);
+        }
+    }
+}
+
+// Запуск визуализации
+function startVisualization() {
+    if (!analyser) return;
+    
+    const bufferLength = analyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+    
+    const updateWaveform = () => {
+        analyser.getByteFrequencyData(dataArray);
+        
+        // Обновление высоты полосок на основе данных аудио
+        for (let i = 0; i < waveBars.length; i++) {
+            const index = Math.floor(bufferLength / waveBars.length * i);
+            let value = dataArray[index];
+            
+            // Нормализация и масштабирование для лучшей визуализации
+            let height = value ? 5 + (value / 255) * 70 : 5;
+            waveBars[i].style.height = `${height}px`;
+        }
+        
+        animationFrameId = requestAnimationFrame(updateWaveform);
+    };
+    
+    updateWaveform();
+}
+
+// Остановка визуализации
+function stopVisualization() {
+    if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+        animationFrameId = null;
+    }
 }
 
 // Функция для добавления подкаста
@@ -64,6 +156,11 @@ async function addPodcast() {
     }
     
     try {
+        // Анимация элемента ввода при загрузке
+        rssInput.style.opacity = '0.7';
+        addPodcastBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+        addPodcastBtn.disabled = true;
+        
         // Используем прокси для обхода CORS
         const proxyUrl = 'https://api.allorigins.win/get?url=';
         const response = await fetch(proxyUrl + encodeURIComponent(rssUrl));
@@ -81,7 +178,16 @@ async function addPodcast() {
         const channel = xml.querySelector('channel');
         const title = channel.querySelector('title').textContent;
         const description = channel.querySelector('description')?.textContent || '';
-        const imageUrl = channel.querySelector('image > url')?.textContent || 'default-avatar.png';
+        let imageUrl = '';
+        
+        // Ищем изображение разными способами (разные форматы RSS)
+        if (channel.querySelector('image > url')) {
+            imageUrl = channel.querySelector('image > url').textContent;
+        } else if (channel.querySelector('itunes\\:image, image')) {
+            imageUrl = channel.querySelector('itunes\\:image, image').getAttribute('href');
+        } else {
+            imageUrl = 'default-avatar.png';
+        }
         
         // Извлечение эпизодов
         const items = xml.querySelectorAll('item');
@@ -89,8 +195,15 @@ async function addPodcast() {
             const title = item.querySelector('title').textContent;
             const description = item.querySelector('description')?.textContent || '';
             const pubDate = item.querySelector('pubDate')?.textContent || '';
+            
+            // Ищем аудио ссылку разными способами
+            let audioUrl = '';
             const enclosure = item.querySelector('enclosure');
-            const audioUrl = enclosure?.getAttribute('url') || '';
+            if (enclosure && enclosure.getAttribute('type')?.includes('audio')) {
+                audioUrl = enclosure.getAttribute('url');
+            } else if (item.querySelector('media\\:content, content')) {
+                audioUrl = item.querySelector('media\\:content, content').getAttribute('url');
+            }
             
             return {
                 title,
@@ -122,9 +235,23 @@ async function addPodcast() {
         
         // Выбор добавленного подкаста
         selectPodcast(podcast);
+        
+        // Добавим анимацию для нового подкаста
+        const newPodcastElement = document.querySelector(`.podcast-item[data-id="${podcast.id}"]`);
+        if (newPodcastElement) {
+            newPodcastElement.classList.add('new-podcast');
+            setTimeout(() => {
+                newPodcastElement.classList.remove('new-podcast');
+            }, 1000);
+        }
     } catch (error) {
         console.error('Ошибка при добавлении подкаста:', error);
         alert('Ошибка при добавлении подкаста. Пожалуйста, проверьте URL и попробуйте снова.');
+    } finally {
+        // Сброс состояния интерфейса
+        rssInput.style.opacity = '1';
+        addPodcastBtn.innerHTML = 'Добавить';
+        addPodcastBtn.disabled = false;
     }
 }
 
@@ -133,18 +260,31 @@ function renderPodcasts() {
     podcastsContainer.innerHTML = '';
     
     if (podcasts.length === 0) {
-        podcastsContainer.innerHTML = '<p>Нет добавленных подкастов</p>';
+        podcastsContainer.innerHTML = '<p class="no-podcasts">Нет добавленных подкастов</p>';
         return;
     }
     
     podcasts.forEach(podcast => {
-        const podcastItem = document.createElement('li');
+        const podcastItem = document.createElement('div');
         podcastItem.className = 'podcast-item';
+        podcastItem.setAttribute('data-id', podcast.id);
+        
         if (currentPodcast && currentPodcast.id === podcast.id) {
             podcastItem.classList.add('active');
         }
         
-        podcastItem.textContent = podcast.title;
+        // Создаем миниатюру для подкаста
+        const podcastAvatar = document.createElement('div');
+        podcastAvatar.className = 'podcast-avatar-mini';
+        podcastAvatar.innerHTML = `<img src="${podcast.imageUrl}" alt="${podcast.title}" onerror="this.src='default-avatar.png'">`;
+        
+        const podcastTitle = document.createElement('div');
+        podcastTitle.className = 'podcast-title-mini';
+        podcastTitle.textContent = podcast.title;
+        
+        podcastItem.appendChild(podcastAvatar);
+        podcastItem.appendChild(podcastTitle);
+        
         podcastItem.addEventListener('click', () => selectPodcast(podcast));
         
         podcastsContainer.appendChild(podcastItem);
@@ -159,8 +299,12 @@ function selectPodcast(podcast) {
     
     // Обновляем информацию в плеере
     currentPodcastImg.src = podcast.imageUrl;
+    currentPodcastImg.onerror = () => currentPodcastImg.src = 'default-avatar.png';
     currentPodcastTitle.textContent = podcast.title;
     currentEpisodeTitle.textContent = 'Выберите эпизод';
+    
+    // Сбрасываем визуализатор при смене подкаста
+    resetWaveVisualizer();
 }
 
 // Функция для отображения списка эпизодов
@@ -168,7 +312,7 @@ function renderEpisodes(episodes) {
     episodesContainer.innerHTML = '';
     
     if (episodes.length === 0) {
-        episodesContainer.innerHTML = '<p>Нет доступных эпизодов</p>';
+        episodesContainer.innerHTML = '<p class="no-episodes">Нет доступных эпизодов</p>';
         return;
     }
     
@@ -185,8 +329,8 @@ function renderEpisodes(episodes) {
         tempDiv.innerHTML = episode.description;
         description.textContent = tempDiv.textContent || tempDiv.innerText || '';
         // Ограничиваем длину описания
-        if (description.textContent.length > 150) {
-            description.textContent = description.textContent.substring(0, 150) + '...';
+        if (description.textContent.length > 120) {
+            description.textContent = description.textContent.substring(0, 120) + '...';
         }
         
         const date = document.createElement('div');
@@ -212,9 +356,21 @@ function playEpisode(episode) {
     
     currentEpisode = episode;
     audioPlayer.src = episode.audioUrl;
-    audioPlayer.play();
+    audioPlayer.play().catch(error => {
+        console.error('Ошибка воспроизведения:', error);
+        alert('Не удалось воспроизвести аудио. Проверьте соединение или URL эпизода.');
+    });
     
     currentEpisodeTitle.textContent = episode.title;
+    
+    // Выделяем активный эпизод
+    document.querySelectorAll('.episode-item').forEach(item => {
+        if (item.querySelector('h3').textContent === episode.title) {
+            item.classList.add('active-episode');
+        } else {
+            item.classList.remove('active-episode');
+        }
+    });
 }
 
 // Функции управления плеером
@@ -294,3 +450,57 @@ setTimeout(() => {
     addPodcastBtn.click();
 }, 1000);
 */
+
+// Добавляем стили для миниатюр подкастов (дополняем CSS динамически)
+const style = document.createElement('style');
+style.textContent = `
+    .podcast-avatar-mini {
+        width: 40px;
+        height: 40px;
+        border-radius: 20px;
+        overflow: hidden;
+        margin-bottom: 8px;
+    }
+    
+    .podcast-avatar-mini img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }
+    
+    .podcast-title-mini {
+        font-size: 12px;
+        white-space: normal;
+        word-break: break-word;
+        text-align: center;
+        max-width: 100px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+    }
+    
+    .new-podcast {
+        animation: pulse 1s ease-in-out;
+    }
+    
+    .active-episode {
+        border-color: #FFFFFF;
+        box-shadow: 0 0 10px rgba(255, 255, 255, 0.2);
+    }
+    
+    .no-podcasts, .no-episodes {
+        color: #777777;
+        font-style: italic;
+        text-align: center;
+        padding: 20px 0;
+    }
+    
+    @keyframes pulse {
+        0% { transform: scale(1); }
+        50% { transform: scale(1.05); }
+        100% { transform: scale(1); }
+    }
+`;
+document.head.appendChild(style);
